@@ -1,0 +1,159 @@
+name: Stream Automation Workflow
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+env:
+  PY_COLORS: "1"
+  BRAVE_VERSION: "latest"
+  PYTHON_VERSION: "3.13"
+  UBUNTU_VERSION: "ubuntu-latest"
+
+jobs:
+  stream-automation:
+    name: Stream Automation Job
+    runs-on: ${{ env.UBUNTU_VERSION }}
+    
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        python-version: ["3.13"]
+
+    permissions:
+      contents: read
+      artifacts: write
+
+    steps:
+      # Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Setup Python environment
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      # Install system dependencies and locale
+      - name: Install system dependencies and configure locale
+        run: |
+          echo "::group::System Updates"
+          sudo apt-get -y update
+          sudo apt-get -y upgrade
+          echo "::endgroup::"
+          
+          echo "::group::Installing locale packages"
+          sudo apt-get install -y --no-install-recommends tzdata locales
+          sudo locale-gen en_US.UTF-8
+          sudo localectl set-locale LANG="en_US.UTF-8"
+          export LANG="en_US.UTF-8"
+          sudo update-locale
+          echo "Locale configuration:"
+          locale -a | grep en_US
+          localectl status
+          echo "::endgroup::"
+        shell: bash
+
+      # Install Cloudflare WARP
+      - name: Install and configure Cloudflare WARP
+        run: |
+          echo "::group::Cloudflare WARP Setup"
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends cloudflare-warp
+          sudo warp-cli --accept-tos registration new
+          sudo warp-cli --accept-tos mode warp+doh
+          sudo warp-cli --accept-tos connect
+          sleep 5
+          echo "::endgroup::"
+        shell: bash
+
+      # Verify WARP connection
+      - name: Verify WARP connection
+        run: |
+          echo "::group::WARP Connection Verification"
+          if curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -q "warp=on"; then
+            echo "✓ WARP connection verified"
+          else
+            echo "✗ WARP connection failed"
+            exit 1
+          fi
+          echo "::endgroup::"
+        shell: bash
+
+      # Install Brave browser
+      - name: Install Brave Browser
+        run: |
+          echo "::group::Brave Browser Installation"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-transport-https curl
+          sudo curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" | sudo tee /etc/apt/sources.list.d/brave-browser-release.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends brave-browser
+          brave-browser --version
+          echo "::endgroup::"
+        shell: bash
+
+      # Install Python dependencies
+      - name: Install Python dependencies
+        run: |
+          echo "::group::Python Dependencies"
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --upgrade \
+            seleniumbase \
+            pyautogui \
+            pymongo \
+            python-xlib \
+            requests
+          echo "::endgroup::"
+        shell: bash
+
+      # Install Chromedriver
+      - name: Install Chromedriver
+        run: |
+          echo "::group::Chromedriver Installation"
+          seleniumbase install chromedriver
+          echo "::endgroup::"
+        shell: bash
+
+      # Run Stream Automation Script
+      - name: Run stream automation script
+        run: |
+          echo "::group::Stream Automation Execution"
+          python delvi.py \
+            --brave \
+            --incognito \
+            --do-not-track \
+            --xvfb \
+            --screenshot
+          echo "::endgroup::"
+        shell: bash
+        continue-on-error: true
+
+      # Upload artifacts
+      - name: Upload execution artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stream-automation-logs-${{ github.run_number }}
+          path: ./latest_logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Generate summary report
+      - name: Generate workflow summary
+        if: always()
+        run: |
+          echo "## Stream Automation Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Python Version:** ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        shell: bash
