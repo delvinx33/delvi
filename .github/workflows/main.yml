@@ -5,26 +5,25 @@ on:
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
-env:
-  PY_COLORS: "1"
-  BRAVE_VERSION: "latest"
-  PYTHON_VERSION: "3.13"
-  UBUNTU_VERSION: "ubuntu-latest"
-
 jobs:
   stream-automation:
+    env:
+      PY_COLORS: "1"
+      BRAVE_VERSION: "latest"
+      PYTHON_VERSION: "3.13"
+      
     name: Stream Automation Job
-    runs-on: ${{ env.UBUNTU_VERSION }}
+    runs-on: ${{ matrix.os }}
     
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         python-version: ["3.13"]
-
+        os: [ubuntu-latest]
     permissions:
       contents: read
-      artifacts: write
+      
 
     steps:
       # Checkout repository
